@@ -1,393 +1,1007 @@
-// Copyright (c) 2025 Delyan Angelov. All rights reserved.
-// The use of this source code is governed by an MIT license that
-// can be found in the LICENSE file.
-module main
-
 import gg
-import gx
 import math
+import math.easing
 import rand
-import os.asset
-import math.vec
 import time
 
-type V2 = vec.Vec2[f32]
+const zooming_percent_per_frame = 5
+const movement_percent_per_frame = 10
 
-fn rads(degrees f32) f32 {
-	return f32(math.radians(degrees))
-}
+const window_title = 'V 2048'
+const default_window_width = 544
+const default_window_height = 560
 
-fn (a V2) offset(angle f32, scale f32) V2 {
-	return a + V2{math.cosf(angle) * scale, math.sinf(angle) * scale}
-}
+const possible_moves = [Direction.up, .right, .down, .left]
+const predictions_per_move = 300
+const prediction_depth = 8
 
-fn (mut a V2) wrap(b V2) {
-	a.x = f32(math.mod(a.x + b.x, b.x))
-	a.y = f32(math.mod(a.y + b.y, b.y))
-}
-
-fn V2.random(b V2) V2 {
-	return V2{rand.f32() * b.x, rand.f32() * b.y}
-}
-
-struct Body {
+struct App {
 mut:
-	pos      V2
-	vel      V2
-	rotation f32
-	radius   f32
-	active   bool = true
+	gg          &gg.Context = unsafe { nil }
+	touch       TouchInfo
+	ui          Ui
+	theme       &Theme = themes[0]
+	theme_idx   int
+	board       Board
+	undo        []Undo
+	atickers    [4][4]f64
+	mtickers    [4][4]f64
+	state       GameState  = .play
+	tile_format TileFormat = .normal
+	moves       int
+	updates     u64
+
+	is_ai_mode bool
+	ai_fpm     u64 = 8
 }
 
-struct Bullet {
-	Body
-}
-
-struct Asteroid {
-	Body
+struct Ui {
 mut:
-	segments      int
-	offsets       []f32
-	points        []f32
-	rotation_step f32 = 1.0
+	dpi_scale     f32
+	tile_size     int
+	border_size   int
+	padding_size  int
+	header_size   int
+	font_size     int
+	window_width  int
+	window_height int
+	x_padding     int
+	y_padding     int
 }
 
-struct Player {
-	Body
+struct Theme {
+	bg_color        gg.Color
+	padding_color   gg.Color
+	text_color      gg.Color
+	game_over_color gg.Color
+	victory_color   gg.Color
+	tile_colors     []gg.Color
+}
+
+const themes = [
+	&Theme{
+		bg_color:        gg.rgb(250, 248, 239)
+		padding_color:   gg.rgb(143, 130, 119)
+		victory_color:   gg.rgb(100, 160, 100)
+		game_over_color: gg.rgb(190, 50, 50)
+		text_color:      gg.black
+		tile_colors:     [
+			gg.rgb(205, 193, 180), // Empty / 0 tile
+			gg.rgb(238, 228, 218), // 2
+			gg.rgb(237, 224, 200), // 4
+			gg.rgb(242, 177, 121), // 8
+			gg.rgb(245, 149, 99), // 16
+			gg.rgb(246, 124, 95), // 32
+			gg.rgb(246, 94, 59), // 64
+			gg.rgb(237, 207, 114), // 128
+			gg.rgb(237, 204, 97), // 256
+			gg.rgb(237, 200, 80), // 512
+			gg.rgb(237, 197, 63), // 1024
+			gg.rgb(237, 194, 46),
+		]
+	},
+	&Theme{
+		bg_color:        gg.rgb(55, 55, 55)
+		padding_color:   gg.rgb(68, 60, 59)
+		victory_color:   gg.rgb(100, 160, 100)
+		game_over_color: gg.rgb(190, 50, 50)
+		text_color:      gg.white
+		tile_colors:     [
+			gg.rgb(123, 115, 108),
+			gg.rgb(142, 136, 130),
+			gg.rgb(142, 134, 120),
+			gg.rgb(145, 106, 72),
+			gg.rgb(147, 89, 59),
+			gg.rgb(147, 74, 57),
+			gg.rgb(147, 56, 35),
+			gg.rgb(142, 124, 68),
+			gg.rgb(142, 122, 58),
+			gg.rgb(142, 120, 48),
+			gg.rgb(142, 118, 37),
+			gg.rgb(142, 116, 27),
+		]
+	},
+	&Theme{
+		bg_color:        gg.rgb(38, 38, 66)
+		padding_color:   gg.rgb(58, 50, 74)
+		victory_color:   gg.rgb(100, 160, 100)
+		game_over_color: gg.rgb(190, 50, 50)
+		text_color:      gg.white
+		tile_colors:     [
+			gg.rgb(92, 86, 140),
+			gg.rgb(106, 99, 169),
+			gg.rgb(106, 97, 156),
+			gg.rgb(108, 79, 93),
+			gg.rgb(110, 66, 76),
+			gg.rgb(110, 55, 74),
+			gg.rgb(110, 42, 45),
+			gg.rgb(106, 93, 88),
+			gg.rgb(106, 91, 75),
+			gg.rgb(106, 90, 62),
+			gg.rgb(106, 88, 48),
+			gg.rgb(106, 87, 35),
+		]
+	},
+]
+
+struct Pos {
+	x int = -1
+	y int = -1
+}
+
+struct Board {
 mut:
-	is_engine_on    bool
-	bullets         int = 99
-	bullets_limit   int = 99
-	fuel            int = 9999
-	fuel_limit      int = 9999
-	cooldown        int
-	cooldown_frames int   = 15
-	points          []f32 = []f32{len: 8}
+	field  [4][4]int
+	oidxs  [4][4]u32 // old indexes of the fields, when != 0;  each index is an encoding of its y,x coordinates = y << 16 | x
+	points int
+	shifts int
 }
 
-struct Game {
+struct Undo {
+	board Board
+	state GameState
+}
+
+struct TileLine {
+	ypos int
 mut:
-	gg        &gg.Context = unsafe { nil }
-	screen    V2          = V2{800, 600}
-	player    Player
-	bullets   []Bullet
-	asteroids []Asteroid
-	score     int
-	highscore int
-	ships     int = 5
-	level     int = 1
-	is_up     bool
-
-	msg Message
+	field  [5]int
+	oidxs  [5]u32
+	points int
+	shifts int
 }
 
-@[params]
-struct Message {
+struct TouchInfo {
 mut:
-	frames int
-	text   string
-	size   int = 40
-	color  gx.Color
-	align  gx.HorizontalAlign = .center
+	start Touch
+	end   Touch
 }
 
-fn (mut a Asteroid) setup() {
-	a.segments = int(a.radius / 10) * 10
-	a.offsets = []f32{len: a.segments}
-	a.points = []f32{len: 2 * a.segments}
-	for i in 0 .. a.segments {
-		a.offsets[i] = a.radius + 25 * (0.5 - rand.f32())
-	}
+struct Touch {
+mut:
+	pos  Pos
+	time time.Time
 }
 
-fn (mut p Player) reset(screen V2) {
-	p.bullets, p.fuel = p.bullets_limit, p.fuel_limit
-	p.pos, p.vel = screen.div_scalar(2), V2{0, 0}
-	p.radius, p.rotation = 15, -90
-	p.active = true
+enum TileFormat {
+	normal
+	log
+	exponent
+	shifts
+	none
+	end // To know when to wrap around
 }
 
-fn (mut game Game) handle_input() {
-	mut p := &game.player
-	p.is_engine_on = false
-	if game.gg.is_key_down(.escape) {
-		exit(0)
-	}
-	if !p.active {
-		return
-	}
-	game.is_up = game.gg.is_key_down(.up) || game.gg.is_key_down(.w)
-	is_fire := game.gg.is_key_down(.space)
-	is_left := game.gg.is_key_down(.left) || game.gg.is_key_down(.a)
-	is_right := game.gg.is_key_down(.right) || game.gg.is_key_down(.d)
-	if is_fire && p.cooldown <= 0 && p.active {
-		game.add_bullet()
-		p.cooldown = p.cooldown_frames
-	}
-	if p.fuel >= 10 {
-		if game.is_up && p.active {
-			angle := rads(p.rotation)
-			p.vel += V2{0, 0}.offset(angle, 0.1)
-			p.fuel -= 10
-			p.is_engine_on = true
+enum GameState {
+	play
+	over
+	victory
+	freeplay
+}
+
+enum LabelKind {
+	keys
+	points
+	moves
+	tile
+	victory
+	game_over
+	score_end
+}
+
+enum Direction {
+	up
+	down
+	left
+	right
+}
+
+// Utility functions
+@[inline]
+fn avg(a int, b int) int {
+	return (a + b) / 2
+}
+
+fn (b Board) transpose() Board {
+	mut res := b
+	for y in 0 .. 4 {
+		for x in 0 .. 4 {
+			res.field[y][x] = b.field[x][y]
+			res.oidxs[y][x] = b.oidxs[x][y]
 		}
 	}
-	if p.fuel >= 1 {
-		if is_left {
-			p.rotation -= 2
-			p.fuel--
-		}
-		if is_right {
-			p.rotation += 2
-			p.fuel--
-		}
-	}
+	return res
 }
 
-fn (mut game Game) update() {
-	game.msg.frames = int_max(0, game.msg.frames - 1)
-	mut p := &game.player
-	p.cooldown = int_max(0, p.cooldown - 1)
-	p.pos += p.vel
-	p.pos.wrap(game.screen)
-	for mut b in game.bullets {
-		if !b.active {
-			continue
-		}
-		b.pos += b.vel
-		if b.pos.x < 0 || b.pos.x > game.screen.x || b.pos.y < 0 || b.pos.y > game.screen.y {
-			b.active = false
+fn (b Board) hmirror() Board {
+	mut res := b
+	for y in 0 .. 4 {
+		for x in 0 .. 4 {
+			res.field[y][x] = b.field[y][3 - x]
+			res.oidxs[y][x] = b.oidxs[y][3 - x]
 		}
 	}
-	for mut a in game.asteroids {
-		if !a.active {
-			continue
-		}
-		a.pos += a.vel
-		a.pos.wrap(game.screen)
-		a.rotation += a.rotation_step
-		if p.active && p.pos.distance(a.pos) <= (p.radius + a.radius) {
-			// player/asteroids collision
-			p.active = false
-			a.active = false
-			game.split_asteroid(a, p.vel.mul_scalar(0.5))
-			game.player.reset(game.screen)
-			game.score += 50
-			game.show_message(text: 'Your ship was destroyed.', color: gx.red, frames: 90)
-			game.ships--
-			if game.ships <= 0 {
-				game.ships = 5
-				game.score = 0
-				game.asteroids = []
-				game.add_asteroids(10)
-			}
+	return res
+}
+
+fn (t TileLine) to_left() TileLine {
+	right_border_idx := 4
+	mut res := t
+	mut zeros := 0
+	mut nonzeros := 0
+	// gather meta info about the line:
+	for x in res.field {
+		if x == 0 {
+			zeros++
+		} else {
+			nonzeros++
 		}
 	}
-	for mut b in game.bullets {
-		if !b.active {
-			continue
-		}
-		for mut a in game.asteroids {
-			if !a.active {
-				continue
-			}
-			if b.active && b.pos.distance(a.pos) <= (b.radius + a.radius) {
-				// bullet/asteroid collision
-				b.active = false
-				a.active = false
-				game.score += 100
-				game.split_asteroid(a, b.vel.mul_scalar(0.2))
-			}
-		}
+	if nonzeros == 0 {
+		// when all the tiles are empty, there is nothing left to do
+		return res
 	}
-	if game.bullets.any(!it.active) {
-		game.bullets = game.bullets.filter(it.active)
-	}
-	if game.asteroids.any(!it.active) {
-		game.asteroids = game.asteroids.filter(it.active)
-	}
-	if game.asteroids.len == 0 {
-		game.level++
-		game.ships++
-		game.player.reset(game.screen)
-		game.add_asteroids(10)
-		game.show_message(text: 'YOU WIN', color: gx.green, frames: 90)
-	}
-	game.highscore = int_max(game.score, game.highscore)
-}
-
-fn (mut game Game) show_message(params Message) {
-	game.msg = params
-}
-
-fn (mut game Game) split_asteroid(a &Asteroid, vel V2) {
-	if a.radius < 30 {
-		return
-	}
-	shrink_factor := 0.5 + 0.3 * rand.f32()
-	mut a1 := Asteroid{
-		...*a
-		active:        true
-		radius:        a.radius * shrink_factor
-		rotation_step: -a.rotation_step
-	}
-	mut a2 := Asteroid{
-		...*a
-		active:        true
-		radius:        a.radius * (1 - shrink_factor)
-		rotation_step: 2 * a.rotation_step
-	}
-	a1.vel = a1.vel.mul_scalar(shrink_factor) * vel
-	a2.vel = a2.vel.mul_scalar(1 - shrink_factor) * (V2{0, 0} - vel)
-	a1.setup()
-	a2.setup()
-	game.asteroids << a1
-	game.asteroids << a2
-}
-
-fn (mut game Game) draw() {
-	ws := gg.window_size()
-	game.screen = V2{ws.width, ws.height}
-	game.gg.draw_rect_filled(0, 0, game.screen.x, game.screen.y, gx.rgba(20, 20, 20, 255))
-	game.draw_ship()
-	for b in game.bullets {
-		game.gg.draw_circle_filled(b.pos.x, b.pos.y, 3, gx.yellow)
-	}
-	for mut a in game.asteroids {
-		game.draw_asteroid(mut a)
-	}
-	scenter := game.screen.div_scalar(2)
-	label1 := 'Level: ${game.level} Ships: ${game.ships}'
-	game.gg.draw_text(5, 10, label1, size: 20, color: gx.white, align: .left)
-	label2 := 'B: ${game.player.bullets:02} F: ${game.player.fuel:04}'
-	game.gg.draw_text(int(scenter.x), 10, label2, size: 20, color: gx.green, align: .center)
-	label3 := 'Score: ${game.score} Highscore: ${game.highscore}'
-	game.gg.draw_text(int(game.screen.x) - 5, 10, label3, size: 20, color: gx.white, align: .right)
-	if game.msg.frames > 0 {
-		game.gg.draw_text(int(scenter.x), int(scenter.y / 2), game.msg.text,
-			size:  game.msg.size
-			color: game.msg.color
-			align: game.msg.align
-		)
-	}
-	label4 := 'Use arrows + space to control your ship. Use Escape to end the game.'
-	game.gg.draw_text(int(game.screen.x - 5), int(game.screen.y - 20), label4,
-		size:  16
-		color: gx.gray
-		align: .right
-	)
-}
-
-fn (game &Game) draw_ship() {
-	mut p := &game.player
-	if !p.active {
-		return
-	}
-	angle := rads(p.rotation)
-	p1 := p.pos.offset(angle, p.radius)
-	p2 := p.pos.offset(angle + 2.5, 0.6 * p.radius)
-	p3 := p.pos.offset(angle, -0.3 * p.radius)
-	p4 := p.pos.offset(angle - 2.5, 0.6 * p.radius)
-	p.points[0] = p1.x
-	p.points[1] = p1.y
-	p.points[2] = p2.x
-	p.points[3] = p2.y
-	p.points[4] = p3.x
-	p.points[5] = p3.y
-	p.points[6] = p4.x
-	p.points[7] = p4.y
-	game.gg.draw_convex_poly(p.points, gx.white)
-	if p.is_engine_on {
-		engine := p.pos.offset(angle + math.pi, 0.7 * p.radius)
-		game.gg.draw_circle_filled(engine.x, engine.y, 6, gx.yellow)
-	}
-}
-
-fn (mut game Game) draw_asteroid(mut a Asteroid) {
-	if !a.active {
-		return
-	}
-	game.gg.draw_circle_filled(a.pos.x, a.pos.y, a.radius, gx.rgba(235, 235, 255, 215))
-	for i in 0 .. a.segments {
-		angle := rads(a.rotation + f32(i) * 360 / a.segments)
-		p := a.pos.offset(angle, a.offsets[i])
-		a.points[i * 2], a.points[i * 2 + 1] = p.x, p.y
-	}
-	game.gg.draw_convex_poly(a.points, gx.rgba(155, 155, 148, 245))
-}
-
-fn (mut game Game) add_bullet() {
-	if game.player.bullets <= 0 {
-		return
-	}
-	game.player.bullets--
-	angle := rads(game.player.rotation)
-	game.bullets << Bullet{
-		pos:    game.player.pos
-		radius: 3
-		vel:    game.player.vel.offset(angle, 10)
-		active: true
-	}
-}
-
-fn (mut game Game) add_asteroids(count int) {
-	for _ in 0 .. count {
-		mut npos := V2{}
-		new_asteroid_loop: for {
-			npos = V2.random(game.screen)
-			for a in game.asteroids {
-				if a.pos.distance(npos) < (a.radius + 30) {
-					continue new_asteroid_loop
+	if zeros > 0 {
+		// we have some 0s, do shifts to compact them:
+		mut remaining_zeros := zeros
+		for x := 0; x < right_border_idx - 1; x++ {
+			for res.field[x] == 0 && remaining_zeros > 0 {
+				res.shifts++
+				for k := x; k < right_border_idx; k++ {
+					res.field[k] = res.field[k + 1]
+					res.oidxs[k] = res.oidxs[k + 1]
 				}
+				remaining_zeros--
 			}
-			if game.player.pos.distance(npos) < 5 * (game.player.radius + 30) {
-				continue new_asteroid_loop
-			}
+		}
+	}
+	// At this point, the non 0 tiles are all on the left, with no empty spaces
+	// between them. we can safely merge them, when they have the same value:
+	for x := 0; x < right_border_idx - 1; x++ {
+		if res.field[x] == 0 {
 			break
 		}
-		radius := 50 + 50 * (0.5 - rand.f32())
-		mut asteroid := Asteroid{
-			pos:           npos
-			vel:           (V2.random(game.screen) - V2.random(game.screen)) / game.screen
-			radius:        radius
-			rotation:      360 * rand.f32()
-			rotation_step: 2 * (0.5 - rand.f32())
-			active:        true
+		if res.field[x] == res.field[x + 1] {
+			for k := x; k < right_border_idx; k++ {
+				res.field[k] = res.field[k + 1]
+				res.oidxs[k] = res.oidxs[k + 1]
+			}
+			res.shifts++
+			res.field[x]++
+			res.points += 1 << res.field[x]
 		}
-		asteroid.setup()
-		game.asteroids << asteroid
+	}
+	return res
+}
+
+fn (b Board) to_left() Board {
+	mut res := b
+	for y in 0 .. 4 {
+		mut hline := TileLine{
+			ypos: y
+		}
+		for x in 0 .. 4 {
+			hline.field[x] = b.field[y][x]
+			hline.oidxs[x] = b.oidxs[y][x]
+		}
+		reshline := hline.to_left()
+		res.shifts += reshline.shifts
+		res.points += reshline.points
+		for x in 0 .. 4 {
+			res.field[y][x] = reshline.field[x]
+			res.oidxs[y][x] = reshline.oidxs[x]
+		}
+	}
+	return res
+}
+
+fn yx2i(y int, x int) u32 {
+	return u32(y) << 16 | u32(x)
+}
+
+fn (mut b Board) move(d Direction) (Board, bool) {
+	for y in 0 .. 4 {
+		for x in 0 .. 4 {
+			b.oidxs[y][x] = yx2i(y, x)
+		}
+	}
+	new := match d {
+		.left { b.to_left() }
+		.right { b.hmirror().to_left().hmirror() }
+		.up { b.transpose().to_left().transpose() }
+		.down { b.transpose().hmirror().to_left().hmirror().transpose() }
+	}
+	// If the board hasn't changed, it's an illegal move, don't allow it.
+	for y in 0 .. 4 {
+		for x in 0 .. 4 {
+			if b.field[y][x] != new.field[y][x] {
+				return new, true
+			}
+		}
+	}
+	return new, false
+}
+
+fn (mut b Board) is_game_over() bool {
+	for y in 0 .. 4 {
+		for x in 0 .. 4 {
+			fidx := b.field[y][x]
+			if fidx == 0 {
+				// there are remaining zeros
+				return false
+			}
+			if (x > 0 && fidx == b.field[y][x - 1])
+				|| (x < 4 - 1 && fidx == b.field[y][x + 1])
+				|| (y > 0 && fidx == b.field[y - 1][x])
+				|| (y < 4 - 1 && fidx == b.field[y + 1][x]) {
+				// there are remaining merges
+				return false
+			}
+		}
+	}
+	return true
+}
+
+fn (mut app App) update_tickers() {
+	for y in 0 .. 4 {
+		for x in 0 .. 4 {
+			app.atickers[y][x] = math.clip(app.atickers[y][x] - f64(zooming_percent_per_frame) / 100.0,
+				0.0, 1.0)
+			app.mtickers[y][x] = math.clip(app.mtickers[y][x] - f64(movement_percent_per_frame) / 100.0,
+				0.0, 1.0)
+		}
 	}
 }
 
-fn on_frame(mut game Game) {
-	if game.gg.timer.elapsed().milliseconds() < 3000 {
-		time.sleep(3000 - game.gg.timer.elapsed().milliseconds())
+fn (mut app App) new_game() {
+	app.board = Board{}
+	for y in 0 .. 4 {
+		for x in 0 .. 4 {
+			app.board.field[y][x] = 0
+			app.atickers[y][x] = 0
+			app.mtickers[y][x] = 0
+		}
+	}
+	app.state = .play
+	app.undo = []Undo{cap: 4096}
+	app.moves = 0
+	app.new_random_tile()
+	app.new_random_tile()
+}
+
+@[inline]
+fn (mut app App) check_for_victory() {
+	for y in 0 .. 4 {
+		for x in 0 .. 4 {
+			fidx := app.board.field[y][x]
+			if fidx == 11 {
+				app.state = .victory
+				return
+			}
+		}
+	}
+}
+
+@[inline]
+fn (mut app App) check_for_game_over() {
+	if app.board.is_game_over() {
+		app.state = .over
+	}
+}
+
+fn (mut b Board) place_random_tile() (Pos, int) {
+	mut etiles := [16]Pos{}
+	mut empty_tiles_max := 0
+	for y in 0 .. 4 {
+		for x in 0 .. 4 {
+			fidx := b.field[y][x]
+			if fidx == 0 {
+				etiles[empty_tiles_max] = Pos{x, y}
+				empty_tiles_max++
+			}
+		}
+	}
+	if empty_tiles_max > 0 {
+		new_random_tile_index := rand.intn(empty_tiles_max) or { 0 }
+		empty_pos := etiles[new_random_tile_index]
+		// 10% chance of getting a `4` tile
+		value := rand.f64n(1.0) or { 0.0 }
+		random_value := if value < 0.9 { 1 } else { 2 }
+		b.field[empty_pos.y][empty_pos.x] = random_value
+		b.oidxs[empty_pos.y][empty_pos.x] = yx2i(empty_pos.y, empty_pos.x)
+		return empty_pos, random_value
+	}
+	return Pos{}, 0
+}
+
+fn (mut app App) new_random_tile() {
+	// do not animate empty fields:
+	for y in 0 .. 4 {
+		for x in 0 .. 4 {
+			fidx := app.board.field[y][x]
+			if fidx == 0 {
+				app.atickers[y][x] = 0
+				app.board.oidxs[y][x] = 0xFFFF_FFFF
+			}
+		}
+	}
+	empty_pos, random_value := app.board.place_random_tile()
+	if random_value > 0 {
+		app.atickers[empty_pos.y][empty_pos.x] = 1.0
+	}
+	if app.state != .freeplay {
+		app.check_for_victory()
+	}
+	app.check_for_game_over()
+}
+
+fn (mut app App) apply_new_board(new Board) {
+	old := app.board
+	app.moves++
+	for y in 0 .. 4 {
+		for x in 0 .. 4 {
+			if old.oidxs[y][x] != new.oidxs[y][x] {
+				app.mtickers[y][x] = 1.0
+			}
+		}
+	}
+	app.board = new
+	app.undo << Undo{old, app.state}
+	app.new_random_tile()
+}
+
+fn (mut app App) move(d Direction) {
+	new, is_valid := app.board.move(d)
+	if !is_valid {
 		return
 	}
+	app.apply_new_board(new)
+}
 
-	if game.gg.timer.elapsed().milliseconds() > 15 {
-		game.gg.timer.restart()
-		game.handle_input()
-		game.update()
+struct Prediction {
+mut:
+	move    Direction
+	mpoints f64
+	mcmoves f64
+}
+
+fn (p Prediction) str() string {
+	return '{ move: ${p.move:5}, mpoints: ${p.mpoints:8.2f}, mcmoves: ${p.mcmoves:6.2f} }'
+}
+
+fn (mut app App) ai_move() {
+	mut predictions := [4]Prediction{}
+	mut is_valid := false
+	think_watch := time.new_stopwatch()
+	for move in possible_moves {
+		move_idx := int(move)
+		predictions[move_idx].move = move
+		mut mpoints := 0
+		mut mcmoves := 0
+		for _ in 0 .. predictions_per_move {
+			mut cboard := app.board
+			cboard, is_valid = cboard.move(move)
+			if !is_valid || cboard.is_game_over() {
+				continue
+			}
+			mpoints += cboard.points
+			mut cmoves := 0
+			for !cboard.is_game_over() {
+				nmove := rand.element(possible_moves) or { Direction.up }
+				cboard, is_valid = cboard.move(nmove)
+				if !is_valid {
+					continue
+				}
+				cboard.place_random_tile()
+				cmoves++
+				if cmoves > prediction_depth {
+					break
+				}
+			}
+			mpoints += cboard.points
+			mcmoves += cmoves
+		}
+		predictions[move_idx].mpoints = f64(mpoints) / predictions_per_move
+		predictions[move_idx].mcmoves = f64(mcmoves) / predictions_per_move
 	}
-	game.gg.begin()
-	game.draw()
-	game.gg.end()
+	mut bestprediction := Prediction{
+		mpoints: -1
+	}
+	for move_idx in 0 .. possible_moves.len {
+		if bestprediction.mpoints < predictions[move_idx].mpoints {
+			bestprediction = predictions[move_idx]
+		}
+	}
+	eprintln('Simulation time: ${think_watch.elapsed().microseconds():4}µs |  best ${bestprediction}')
+	app.move(bestprediction.move)
+}
+
+fn (app &App) label_format(kind LabelKind) gg.TextCfg {
+	match kind {
+		.keys {
+			return gg.TextCfg{
+				color:          gg.Color{150, 150, 255, 200}
+				align:          .center
+				vertical_align: .bottom
+				size:           app.ui.font_size / 4
+			}
+		}
+		.points {
+			return gg.TextCfg{
+				color: if app.state in [.over, .victory] { gg.white } else { app.theme.text_color }
+				align: .left
+				size:  app.ui.font_size / 2
+			}
+		}
+		.moves {
+			return gg.TextCfg{
+				color: if app.state in [.over, .victory] { gg.white } else { app.theme.text_color }
+				align: .right
+				size:  app.ui.font_size / 2
+			}
+		}
+		.tile {
+			return gg.TextCfg{
+				color:          app.theme.text_color
+				align:          .center
+				vertical_align: .middle
+				size:           app.ui.font_size
+			}
+		}
+		.victory {
+			return gg.TextCfg{
+				color:          app.theme.victory_color
+				align:          .center
+				vertical_align: .middle
+				size:           app.ui.font_size * 2
+			}
+		}
+		.game_over {
+			return gg.TextCfg{
+				color:          app.theme.game_over_color
+				align:          .center
+				vertical_align: .middle
+				size:           app.ui.font_size * 2
+			}
+		}
+		.score_end {
+			return gg.TextCfg{
+				color:          gg.white
+				align:          .center
+				vertical_align: .middle
+				size:           app.ui.font_size * 3 / 4
+			}
+		}
+	}
+}
+
+@[inline]
+fn (mut app App) set_theme(idx int) {
+	theme := themes[idx]
+	app.theme_idx = idx
+	app.theme = theme
+	app.gg.set_bg_color(theme.bg_color)
+}
+
+fn (mut app App) resize() {
+	mut s := app.gg.scale
+	if s == 0.0 {
+		s = 1.0
+	}
+	window_size := app.gg.window_size()
+	w := window_size.width
+	h := window_size.height
+	m := f32(math.min(w, h))
+	app.ui.dpi_scale = s
+	app.ui.window_width = w
+	app.ui.window_height = h
+	app.ui.padding_size = int(m / 38)
+	app.ui.header_size = app.ui.padding_size
+	app.ui.border_size = app.ui.padding_size * 2
+	app.ui.tile_size = int((m - app.ui.padding_size * 5 - app.ui.border_size * 2) / 4)
+	app.ui.font_size = int(m / 10)
+	// If the window's height is greater than its width, center the board vertically.
+	// If not, center it horizontally
+	if w > h {
+		app.ui.y_padding = 0
+		app.ui.x_padding = (app.ui.window_width - app.ui.window_height) / 2
+	} else {
+		app.ui.y_padding = (app.ui.window_height - app.ui.window_width - app.ui.header_size) / 2
+		app.ui.x_padding = 0
+	}
+}
+
+fn (app &App) draw() {
+	xpad, ypad := app.ui.x_padding, app.ui.y_padding
+	ww := app.ui.window_width
+	wh := app.ui.window_height
+	m := math.min(ww, wh)
+	labelx := xpad + app.ui.border_size
+	labely := ypad + app.ui.border_size / 2
+	app.draw_tiles()
+	// TODO: Make transparency work in `gg`
+	if app.state == .over {
+		app.gg.draw_rect_filled(0, 0, ww, wh, gg.rgba(10, 0, 0, 180))
+		app.gg.draw_text(ww / 2, (m * 4 / 10) + ypad, 'Game Over', app.label_format(.game_over))
+		f := app.label_format(.tile)
+		msg := $if android { 'Tap to restart' } $else { 'Press `r` to restart' }
+		app.gg.draw_text(ww / 2, (m * 6 / 10) + ypad, msg, gg.TextCfg{
+			...f
+			color: gg.white
+			size:  f.size * 3 / 4
+		})
+	}
+	if app.state == .victory {
+		app.gg.draw_rect_filled(0, 0, ww, wh, gg.rgba(0, 10, 0, 180))
+		app.gg.draw_text(ww / 2, (m * 4 / 10) + ypad, 'Victory!', app.label_format(.victory))
+		// f := app.label_format(.tile)
+		msg1 := $if android { 'Tap to continue' } $else { 'Press `space` to continue' }
+		msg2 := $if android { 'Tap to restart' } $else { 'Press `r` to restart' }
+		app.gg.draw_text(ww / 2, (m * 6 / 10) + ypad, msg1, app.label_format(.score_end))
+		app.gg.draw_text(ww / 2, (m * 8 / 10) + ypad, msg2, app.label_format(.score_end))
+	}
+	// Draw at the end, so that it's on top of the victory / game over overlays
+	app.gg.draw_text(labelx, labely, 'Points: ${app.board.points}', app.label_format(.points))
+	app.gg.draw_text(ww - labelx, labely, 'Moves: ${app.moves}', app.label_format(.moves))
+	app.gg.draw_text(ww / 2, wh, 'Controls: WASD,V,<=,T,Enter,ESC', app.label_format(.keys))
+}
+
+fn (app &App) draw_tiles() {
+	xstart := app.ui.x_padding + app.ui.border_size
+	ystart := app.ui.y_padding + app.ui.border_size + app.ui.header_size
+	toffset := app.ui.tile_size + app.ui.padding_size
+	tiles_size := math.min(app.ui.window_width, app.ui.window_height) - app.ui.border_size * 2
+	// Draw the padding around the tiles
+	app.gg.draw_rounded_rect_filled(xstart, ystart, tiles_size, tiles_size, tiles_size / 24,
+		app.theme.padding_color)
+
+	// Draw empty tiles:
+	for y in 0 .. 4 {
+		for x in 0 .. 4 {
+			tw := app.ui.tile_size
+			th := tw // square tiles, w == h
+			xoffset := xstart + app.ui.padding_size + x * toffset
+			yoffset := ystart + app.ui.padding_size + y * toffset
+			app.gg.draw_rounded_rect_filled(xoffset, yoffset, tw, th, tw / 8, app.theme.tile_colors[0])
+		}
+	}
+
+	// Draw the already placed and potentially moving tiles:
+	for y in 0 .. 4 {
+		for x in 0 .. 4 {
+			tidx := app.board.field[y][x]
+			oidx := app.board.oidxs[y][x]
+			if tidx == 0 || oidx == 0xFFFF_FFFF {
+				continue
+			}
+			app.draw_one_tile(x, y, tidx)
+		}
+	}
+
+	// Draw the newly placed random tiles on top of everything else:
+	for y in 0 .. 4 {
+		for x in 0 .. 4 {
+			tidx := app.board.field[y][x]
+			oidx := app.board.oidxs[y][x]
+			if oidx == 0xFFFF_FFFF && tidx != 0 {
+				app.draw_one_tile(x, y, tidx)
+			}
+		}
+	}
+}
+
+fn (app &App) draw_one_tile(x int, y int, tidx int) {
+	xstart := app.ui.x_padding + app.ui.border_size
+	ystart := app.ui.y_padding + app.ui.border_size + app.ui.header_size
+	toffset := app.ui.tile_size + app.ui.padding_size
+	oidx := app.board.oidxs[y][x]
+	oy := oidx >> 16
+	ox := oidx & 0xFFFF
+	mut dx := 0
+	mut dy := 0
+	if oidx != 0xFFFF_FFFF {
+		scaling := app.ui.tile_size * easing.in_out_quint(app.mtickers[y][x])
+		if ox != x {
+			dx = math.clip(int(scaling * (f64(ox) - f64(x))), -4 * app.ui.tile_size, 4 * app.ui.tile_size)
+		}
+		if oy != y {
+			dy = math.clip(int(scaling * (f64(oy) - f64(y))), -4 * app.ui.tile_size, 4 * app.ui.tile_size)
+		}
+	}
+	tile_color := if tidx < app.theme.tile_colors.len {
+		app.theme.tile_colors[tidx]
+	} else {
+		// If there isn't a specific color for this tile, reuse the last color available
+		app.theme.tile_colors.last()
+	}
+	anim_size := 1.0 - app.atickers[y][x]
+	tw := int(f64(anim_size * app.ui.tile_size))
+	th := tw // square tiles, w == h
+	xoffset := dx + xstart + app.ui.padding_size + x * toffset + (app.ui.tile_size - tw) / 2
+	yoffset := dy + ystart + app.ui.padding_size + y * toffset + (app.ui.tile_size - th) / 2
+	app.gg.draw_rounded_rect_filled(xoffset, yoffset, tw, th, tw / 8, tile_color)
+	if tidx != 0 { // 0 == blank spot
+		xpos := xoffset + tw / 2
+		ypos := yoffset + th / 2
+		mut fmt := app.label_format(.tile)
+		fmt = gg.TextCfg{
+			...fmt
+			size: int(anim_size * (fmt.size - 1))
+		}
+		match app.tile_format {
+			.normal {
+				app.gg.draw_text(xpos, ypos, '${1 << tidx}', fmt)
+			}
+			.log {
+				app.gg.draw_text(xpos, ypos, '${tidx}', fmt)
+			}
+			.exponent {
+				app.gg.draw_text(xpos, ypos, '2', fmt)
+				fs2 := int(f32(fmt.size) * 0.67)
+				app.gg.draw_text(xpos + app.ui.tile_size / 10, ypos - app.ui.tile_size / 8,
+					'${tidx}', gg.TextCfg{
+					...fmt
+					size:  fs2
+					align: gg.HorizontalAlign.left
+				})
+			}
+			.shifts {
+				fs2 := int(f32(fmt.size) * 0.6)
+				app.gg.draw_text(xpos, ypos, '2<<${tidx - 1}', gg.TextCfg{
+					...fmt
+					size: fs2
+				})
+			}
+			.none {} // Don't draw any text here, colors only
+			.end {} // Should never get here
+		}
+		// oidx_fmt := gg.TextCfg{...fmt,size: 14}
+		// app.gg.draw_text(xoffset + 50, yoffset + 15, 'y:${oidx >> 16}|x:${oidx & 0xFFFF}|m:${app.mtickers[y][x]:5.3f}',	oidx_fmt)
+		// app.gg.draw_text(xoffset + 52, yoffset + 30, 'ox:${ox}|oy:${oy}', oidx_fmt)
+		// app.gg.draw_text(xoffset + 52, yoffset + 85, 'dx:${dx}|dy:${dy}', oidx_fmt)
+	}
+}
+
+fn (mut app App) handle_touches() {
+	s, e := app.touch.start, app.touch.end
+	adx, ady := math.abs(e.pos.x - s.pos.x), math.abs(e.pos.y - s.pos.y)
+	if math.max(adx, ady) < 10 {
+		app.handle_tap()
+	} else {
+		app.handle_swipe()
+	}
+}
+
+fn (mut app App) handle_tap() {
+	_, ypad := app.ui.x_padding, app.ui.y_padding
+	w, h := app.ui.window_width, app.ui.window_height
+	m := math.min(w, h)
+	s, e := app.touch.start, app.touch.end
+	avgx, avgy := avg(s.pos.x, e.pos.x), avg(s.pos.y, e.pos.y)
+	// TODO: Replace "touch spots" with actual buttons
+	// bottom left -> change theme
+	if avgx < 50 && h - avgy < 50 {
+		app.next_theme()
+	}
+	// bottom right -> change tile format
+	if w - avgx < 50 && h - avgy < 50 {
+		app.next_tile_format()
+	}
+	if app.state == .victory {
+		if avgy > (m / 2) + ypad {
+			if avgy < (m * 7 / 10) + ypad {
+				app.state = .freeplay
+			} else if avgy < (m * 9 / 10) + ypad {
+				app.new_game()
+			} else {
+				// TODO: remove and implement an actual way to toggle themes on mobile
+			}
+		}
+	} else if app.state == .over {
+		if avgy > (m / 2) + ypad && avgy < (m * 7 / 10) + ypad {
+			app.new_game()
+		}
+	}
+}
+
+fn (mut app App) handle_swipe() {
+	// Currently, swipes are only used to move the tiles.
+	// If the user's not playing, exit early to avoid all the unnecessary calculations
+	if app.state !in [.play, .freeplay] {
+		return
+	}
+	s, e := app.touch.start, app.touch.end
+	w, h := app.ui.window_width, app.ui.window_height
+	dx, dy := e.pos.x - s.pos.x, e.pos.y - s.pos.y
+	adx, ady := math.abs(dx), math.abs(dy)
+	dmin := if math.min(adx, ady) > 0 { math.min(adx, ady) } else { 1 }
+	dmax := if math.max(adx, ady) > 0 { math.max(adx, ady) } else { 1 }
+	tdiff := (e.time - s.time).milliseconds()
+	// TODO: make this calculation more accurate (don't use arbitrary numbers)
+	min_swipe_distance := int(math.sqrt(math.min(w, h) * tdiff / 100)) + 20
+	if dmax < min_swipe_distance {
+		return
+	}
+	// Swipe was too short
+	if dmax / dmin < 2 {
+		return
+	}
+	// Swiped diagonally
+	if adx > ady {
+		if dx < 0 {
+			app.move(.left)
+		} else {
+			app.move(.right)
+		}
+	} else {
+		if dy < 0 {
+			app.move(.up)
+		} else {
+			app.move(.down)
+		}
+	}
+}
+
+@[inline]
+fn (mut app App) next_theme() {
+	app.set_theme(if app.theme_idx == themes.len - 1 { 0 } else { app.theme_idx + 1 })
+}
+
+@[inline]
+fn (mut app App) next_tile_format() {
+	app.tile_format = unsafe { TileFormat(int(app.tile_format) + 1) }
+	if app.tile_format == .end {
+		app.tile_format = .normal
+	}
+}
+
+@[inline]
+fn (mut app App) undo() {
+	if app.undo.len > 0 {
+		undo := app.undo.pop()
+		app.board = undo.board
+		app.state = undo.state
+		app.moves--
+	}
+}
+
+fn (mut app App) on_key_down(key gg.KeyCode) {
+	// these keys are independent from the game state:
+	match key {
+		.v { app.is_ai_mode = !app.is_ai_mode }
+		.page_up { app.ai_fpm = dump(math.min(app.ai_fpm + 1, 60)) }
+		.page_down { app.ai_fpm = dump(math.max(app.ai_fpm - 1, 1)) }
+		//
+		.escape { app.gg.quit() }
+		.n, .r { app.new_game() }
+		.backspace { app.undo() }
+		.enter { app.next_tile_format() }
+		.j { app.state = .over }
+		.t { app.next_theme() }
+		else {}
+	}
+	if app.state in [.play, .freeplay] {
+		if !app.is_ai_mode {
+			match key {
+				.w, .up { app.move(.up) }
+				.a, .left { app.move(.left) }
+				.s, .down { app.move(.down) }
+				.d, .right { app.move(.right) }
+				else {}
+			}
+		}
+	}
+	if app.state == .victory {
+		if key == .space {
+			app.state = .freeplay
+		}
+	}
+}
+
+fn on_event(e &gg.Event, mut app App) {
+	match e.typ {
+		.key_down {
+			app.on_key_down(e.key_code)
+		}
+		.resized, .restored, .resumed {
+			app.resize()
+		}
+		.touches_began {
+			if e.num_touches > 0 {
+				t := e.touches[0]
+				app.touch.start = Touch{
+					pos:  Pos{
+						x: int(t.pos_x / app.ui.dpi_scale)
+						y: int(t.pos_y / app.ui.dpi_scale)
+					}
+					time: time.now()
+				}
+			}
+		}
+		.touches_ended {
+			if e.num_touches > 0 {
+				t := e.touches[0]
+				app.touch.end = Touch{
+					pos:  Pos{
+						x: int(t.pos_x / app.ui.dpi_scale)
+						y: int(t.pos_y / app.ui.dpi_scale)
+					}
+					time: time.now()
+				}
+				app.handle_touches()
+			}
+		}
+		.mouse_down {
+			app.touch.start = Touch{
+				pos:  Pos{
+					x: int(e.mouse_x / app.ui.dpi_scale)
+					y: int(e.mouse_y / app.ui.dpi_scale)
+				}
+				time: time.now()
+			}
+		}
+		.mouse_up {
+			app.touch.end = Touch{
+				pos:  Pos{
+					x: int(e.mouse_x / app.ui.dpi_scale)
+					y: int(e.mouse_y / app.ui.dpi_scale)
+				}
+				time: time.now()
+			}
+			app.handle_touches()
+		}
+		else {}
+	}
+}
+
+fn frame(mut app App) {
+	mut do_update := false
+	if app.gg.timer.elapsed().milliseconds() > 15 {
+		app.gg.timer.restart()
+		do_update = true
+		app.updates++
+	}
+	app.gg.begin()
+	if do_update {
+		app.update_tickers()
+	}
+	app.draw()
+	app.gg.end()
+	if do_update && app.is_ai_mode && app.state in [.play, .freeplay]
+		&& app.updates % app.ai_fpm == 0 {
+		app.ai_move()
+	}
+	if app.updates % 120 == 0 {
+		// do GC once per 2 seconds
+		// eprintln('> gc_memory_use: ${gc_memory_use()}')
+		if gc_is_enabled() {
+			// Avoid assert error when built with `-cg` on some systems
+			gc_disable()
+		}
+		gc_enable()
+		gc_collect()
+		gc_disable()
+	}
+}
+
+fn init(mut app App) {
+	app.resize()
 }
 
 fn main() {
-	mut game := &Game{}
-	mut fpath := asset.get_path('../assets', 'fonts/RobotoMono-Regular.ttf')
-	game.player.reset(game.screen)
-	game.add_asteroids(10)
-	game.gg = gg.new_context(
-		window_title: 'V Asteroids'
-		width:        int(game.screen.x)
-		height:       int(game.screen.y)
-		frame_fn:     on_frame
-		user_data:    game
-		sample_count: 2
-		font_path:    fpath
+	mut app := &App{}
+	app.new_game()
+	app.gg = gg.new_context(
+		bg_color:     app.theme.bg_color
+		width:        default_window_width
+		height:       default_window_height
+		sample_count: 2 // higher quality curves
+		window_title: 'V 2048'
+		frame_fn:     frame
+		event_fn:     on_event
+		init_fn:      init
+		user_data:    app
+		font_path:    'JetBrainsMonoNerdFont-Regular.ttf'
 	)
-	game.gg.run()
+	app.gg.run()
 }
