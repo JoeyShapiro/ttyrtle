@@ -3,3 +3,5 @@ build:
     v -g -autofree -skip-unused .
 publish:
     v -skip-unused -prod .
+run: build
+    ./ttyrtle

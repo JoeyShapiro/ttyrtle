@@ -22,6 +22,8 @@ mut:
 
 	is_ai_mode bool
 	ai_fpm     u64 = 8
+	text       string
+	shift_is_held bool
 }
 
 struct Ui {
@@ -132,7 +134,7 @@ fn (app &App) draw() {
 	xpad, ypad := app.ui.x_padding, app.ui.y_padding
 	labelx := xpad + app.ui.border_size
 	labely := ypad + app.ui.border_size / 2
-	app.gg.draw_text(labelx, labely, 'Ttyrtle', gg.TextCfg{
+	app.gg.draw_text(labelx, labely, app.text, gg.TextCfg{
 		size: app.ui.font_size
 		color: app.theme.text_color
 	})
@@ -143,26 +145,39 @@ fn (mut app App) next_theme() {
 	app.set_theme(if app.theme_idx == themes.len - 1 { 0 } else { app.theme_idx + 1 })
 }
 
-fn (mut app App) on_key_down(key gg.KeyCode) {
-	// these keys are independent from the game state:
-	match key {
-		.v { app.is_ai_mode = !app.is_ai_mode }
-		.page_up { app.ai_fpm = dump(math.min(app.ai_fpm + 1, 60)) }
-		.page_down { app.ai_fpm = dump(math.max(app.ai_fpm - 1, 1)) }
-		//
-		.escape { app.gg.quit() }
-		.n, .r { 
-			println("double")
-		}
-		.t { app.next_theme() }
-		else {}
-	}
-}
-
 fn on_event(e &gg.Event, mut app App) {
 	match e.typ {
 		.key_down {
-			app.on_key_down(e.key_code)
+			match e.key_code {
+				.v { app.is_ai_mode = !app.is_ai_mode }
+				.page_up { app.ai_fpm = dump(math.min(app.ai_fpm + 1, 60)) }
+				.page_down { app.ai_fpm = dump(math.max(app.ai_fpm - 1, 1)) }
+				//
+				.escape { app.gg.quit() }
+				.n, .r { 
+					println("double")
+				}
+				.t { app.next_theme() }
+				.left_shift, .right_shift {
+					app.shift_is_held = true
+				}
+				else {
+					c := rune(e.key_code)
+					if !app.shift_is_held && (c >= `J` && c <= `Z`) {
+						app.text += (c + 32).str()
+					} else {
+						app.text += rune(e.key_code).str()
+					}
+				}
+			}
+		}
+		.key_up {
+			match e.key_code {
+				.left_shift, .right_shift {
+					app.shift_is_held = false
+				}
+				else {}
+			}
 		}
 		.resized, .restored, .resumed {
 			app.resize()
@@ -179,7 +194,7 @@ fn on_event(e &gg.Event, mut app App) {
 
 fn frame(mut app App) {
 	mut do_update := false
-	if app.gg.timer.elapsed().milliseconds() > 15 {
+	if app.gg.timer.elapsed().milliseconds() > 60 {
 		app.gg.timer.restart()
 		do_update = true
 		app.updates++
