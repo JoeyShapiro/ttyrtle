@@ -1,15 +1,8 @@
 import gg
 import math
 
-const zooming_percent_per_frame = 5
-const movement_percent_per_frame = 10
-
-const window_title = 'Ttyrtle'
-const default_window_width = 544
-const default_window_height = 560
-
-const predictions_per_move = 300
-const prediction_depth = 8
+const default_window_width = 573//1280
+const default_window_height = 337//720
 
 struct App {
 mut:
@@ -23,6 +16,8 @@ mut:
 	is_ai_mode bool
 	ai_fpm     u64 = 8
 	text       string
+	row 	   int
+	col 	   int
 	shift_is_held bool
 }
 
@@ -110,24 +105,20 @@ fn (mut app App) resize() {
 	window_size := app.gg.window_size()
 	w := window_size.width
 	h := window_size.height
-	m := f32(math.min(w, h))
 	app.ui.dpi_scale = s
-	app.ui.window_width = w
-	app.ui.window_height = h
-	app.ui.padding_size = int(m / 38)
+	// do i have to match mac. i always spend forever doing it
+	// i dont have to match their scaling. but i should match my scaling
+	cw := app.gg.text_width("J")
+	ch := app.gg.text_height("J")
+
+	vw := int(f32(w) / s / cw)
+	vh := int(f32(h) / s / ch)
+	println('window resized to ${w}x${h}, view size ${vw}x${vh}, scale=${s}, cw=${cw}, ch=${ch}')
+
+	app.ui.padding_size = 16 // int(m / 38)
 	app.ui.header_size = app.ui.padding_size
 	app.ui.border_size = app.ui.padding_size * 2
-	app.ui.tile_size = int((m - app.ui.padding_size * 5 - app.ui.border_size * 2) / 4)
-	app.ui.font_size = int(m / 10)
-	// If the window's height is greater than its width, center the board vertically.
-	// If not, center it horizontally
-	if w > h {
-		app.ui.y_padding = 0
-		app.ui.x_padding = (app.ui.window_width - app.ui.window_height) / 2
-	} else {
-		app.ui.y_padding = (app.ui.window_height - app.ui.window_width - app.ui.header_size) / 2
-		app.ui.x_padding = 0
-	}
+	app.ui.font_size = 18 //int(m / 10) // 54
 }
 
 fn (app &App) draw() {
@@ -160,6 +151,9 @@ fn on_event(e &gg.Event, mut app App) {
 				.t { app.next_theme() }
 				.left_shift, .right_shift {
 					app.shift_is_held = true
+				}
+				.enter {
+					app.row++
 				}
 				else {
 					c := rune(e.key_code)
