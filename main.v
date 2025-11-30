@@ -1,5 +1,6 @@
 import gg
 import math
+import os
 
 const default_window_width = 573//1280
 const default_window_height = 337//720
@@ -15,10 +16,12 @@ mut:
 
 	is_ai_mode bool
 	ai_fpm     u64 = 8
+	p          &os.Process = unsafe { nil }
 	text       string
 	row 	   int
 	col 	   int
 	shift_is_held bool
+	dirty 	   bool
 }
 
 struct Ui {
@@ -156,12 +159,15 @@ fn on_event(e &gg.Event, mut app App) {
 					app.row++
 				}
 				else {
-					c := rune(e.key_code)
-					if !app.shift_is_held && (c >= `J` && c <= `Z`) {
-						app.text += (c + 32).str()
+					r := rune(e.key_code)
+					c := if !app.shift_is_held && (r >= `J` && r <= `Z`) {
+						(r + 32).str()
 					} else {
-						app.text += rune(e.key_code).str()
+						r.str()
 					}
+					app.text += c
+					// app.p.stdin_write(c)
+					app.dirty = true
 				}
 			}
 		}
@@ -192,13 +198,23 @@ fn frame(mut app App) {
 		app.gg.timer.restart()
 		do_update = true
 		app.updates++
+		if app.p.is_pending(.stdout) {
+			data := app.p.stdout_read()
+			app.text += data
+			app.dirty = true
+		}
+		// app.p.wait()
 	}
+	// if !app.dirty {
+	// 	return
+	// }
 	app.gg.begin()
 	if do_update {
 		// app.update_tickers()
 	}
 	app.draw()
 	app.gg.end()
+	app.dirty = false
 }
 
 fn init(mut app App) {
@@ -206,6 +222,15 @@ fn init(mut app App) {
 }
 
 fn main() {
+	// TODO wrapper of fork+exec, but maybe use posix_spawn if this isnt good enough
+	mut p := os.new_process("/bin/sh")
+	// args := ['']
+	// p.set_args(args)
+	p.set_redirect_stdio()
+	p.use_pgroup = true // i remember this being useful, but forgot why
+	p.run()
+	p.stdin_write("echo hello from v\n")
+
 	mut app := &App{}
 	app.gg = gg.new_context(
 		bg_color:     app.theme.bg_color
@@ -219,5 +244,6 @@ fn main() {
 		user_data:    app
 		font_path:    'JetBrainsMonoNerdFont-Regular.ttf'
 	)
+	app.p = p
 	app.gg.run()
 }
