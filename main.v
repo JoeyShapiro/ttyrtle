@@ -1,5 +1,4 @@
 import gg
-import math
 import os
 
 const default_window_width = 573//1280
@@ -11,14 +10,10 @@ mut:
 	ui          Ui
 	theme       &Theme = themes[0]
 	theme_idx   int
-	moves       int
 	updates     u64
 
-	is_ai_mode bool
-	ai_fpm     u64 = 8
 	p          &os.Process = unsafe { nil }
 	text       string
-	row 	   int
 	col 	   int
 	shift_is_held bool
 	dirty 	   bool
@@ -128,10 +123,14 @@ fn (app &App) draw() {
 	xpad, ypad := app.ui.x_padding, app.ui.y_padding
 	labelx := xpad + app.ui.border_size
 	labely := ypad + app.ui.border_size / 2
-	app.gg.draw_text(labelx, labely, app.text, gg.TextCfg{
-		size: app.ui.font_size
-		color: app.theme.text_color
-	})
+
+	for i, line in app.text.split('\n') {
+		row := app.ui.font_size * i
+		app.gg.draw_text(labelx, labely+row, line, gg.TextCfg{
+			size: app.ui.font_size
+			color: app.theme.text_color
+		})
+	}
 }
 
 @[inline]
@@ -143,9 +142,6 @@ fn on_event(e &gg.Event, mut app App) {
 	match e.typ {
 		.key_down {
 			match e.key_code {
-				.v { app.is_ai_mode = !app.is_ai_mode }
-				.page_up { app.ai_fpm = dump(math.min(app.ai_fpm + 1, 60)) }
-				.page_down { app.ai_fpm = dump(math.max(app.ai_fpm - 1, 1)) }
 				//
 				.escape { app.gg.quit() }
 				.n, .r { 
@@ -156,20 +152,21 @@ fn on_event(e &gg.Event, mut app App) {
 					app.shift_is_held = true
 				}
 				.enter {
-					app.row++
+					app.p.stdin_write("\n")
+					app.text += "\n"
 				}
 				else {
 					r := rune(e.key_code)
-					c := if !app.shift_is_held && (r >= `J` && r <= `Z`) {
+					c := if !app.shift_is_held && (r >= `A` && r <= `Z`) {
 						(r + 32).str()
 					} else {
 						r.str()
 					}
 					app.text += c
-					// app.p.stdin_write(c)
-					app.dirty = true
+					app.p.stdin_write(c)
 				}
 			}
+			app.dirty = true
 		}
 		.key_up {
 			match e.key_code {
