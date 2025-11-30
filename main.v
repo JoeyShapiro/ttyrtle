@@ -164,6 +164,12 @@ fn on_event(e &gg.Event, mut app App) {
 					app.text += "\n"
 					app.input = ""
 				}
+				.backspace {
+					if app.input.len > 0 {
+						app.input = app.input[..app.input.len - 1]
+						app.p.stdin_write("\b")
+					}
+				}
 				else {
 					r := rune(e.key_code)
 					c := if !app.shift_is_held && (r >= `A` && r <= `Z`) {
