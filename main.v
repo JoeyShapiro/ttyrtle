@@ -13,6 +13,7 @@ mut:
 	updates     u64
 
 	p          &os.Process = unsafe { nil }
+	input      string
 	text       string
 	col 	   int
 	shift_is_held bool
@@ -117,6 +118,8 @@ fn (mut app App) resize() {
 	app.ui.header_size = app.ui.padding_size
 	app.ui.border_size = app.ui.padding_size * 2
 	app.ui.font_size = 18 //int(m / 10) // 54
+	app.ui.window_height = h
+	app.ui.window_width = w
 }
 
 fn (app &App) draw() {
@@ -131,6 +134,11 @@ fn (app &App) draw() {
 			color: app.theme.text_color
 		})
 	}
+
+	app.gg.draw_text(labelx, app.ui.window_height - labely - app.ui.font_size, app.input, gg.TextCfg{
+		size: app.ui.font_size
+		color: app.theme.text_color
+	})
 }
 
 @[inline]
@@ -154,6 +162,7 @@ fn on_event(e &gg.Event, mut app App) {
 				.enter {
 					app.p.stdin_write("\n")
 					app.text += "\n"
+					app.input = ""
 				}
 				else {
 					r := rune(e.key_code)
@@ -162,7 +171,7 @@ fn on_event(e &gg.Event, mut app App) {
 					} else {
 						r.str()
 					}
-					app.text += c
+					app.input += c
 					app.p.stdin_write(c)
 				}
 			}
