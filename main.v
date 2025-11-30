@@ -161,7 +161,6 @@ fn on_event(e &gg.Event, mut app App) {
 				}
 				.enter {
 					app.p.stdin_write("\n")
-					app.text += "\n"
 					app.input = ""
 				}
 				.backspace {
@@ -212,6 +211,11 @@ fn frame(mut app App) {
 		app.updates++
 		if app.p.is_pending(.stdout) {
 			data := app.p.stdout_read()
+			app.text += data
+			app.dirty = true
+		}
+		if app.p.is_pending(.stderr) {
+			data := app.p.stderr_read()
 			app.text += data
 			app.dirty = true
 		}
