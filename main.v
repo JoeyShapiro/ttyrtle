@@ -14,10 +14,28 @@ mut:
 
 	p          &os.Process = unsafe { nil }
 	input      string
-	text       string
+	commands     []Command
 	col 	   int
 	shift_is_held bool
 	dirty 	   bool
+}
+
+struct Command {
+	input  string
+mut:
+	stdios []Stdio
+	code   int
+}
+
+struct Stdio {
+	std_type  StdType
+	text string
+}
+
+enum StdType {
+	stdin
+	stdout
+	stderr
 }
 
 struct Ui {
@@ -126,13 +144,27 @@ fn (app &App) draw() {
 	xpad, ypad := app.ui.x_padding, app.ui.y_padding
 	labelx := xpad + app.ui.border_size
 	labely := ypad + app.ui.border_size / 2
+	mut row := 0
 
-	for i, line in app.text.split('\n') {
-		row := app.ui.font_size * i
-		app.gg.draw_text(labelx, labely+row, line, gg.TextCfg{
-			size: app.ui.font_size
-			color: app.theme.text_color
-		})
+	for cmd in app.commands {
+		for stdio in cmd.stdios {
+			app.gg.draw_text(labelx, labely+row*app.ui.font_size, cmd.input, gg.TextCfg{
+				size: app.ui.font_size
+				color: app.theme.padding_color
+			})
+
+			for line in stdio.text.split('\n') {
+				row++
+				app.gg.draw_text(labelx, labely+row*app.ui.font_size, line, gg.TextCfg{
+					size: app.ui.font_size
+					color: match stdio.std_type {
+						.stdout { app.theme.text_color }
+						.stderr { gg.red }
+						else { gg.gray }
+					}
+				})
+			}
+		}
 	}
 
 	app.gg.draw_text(labelx, app.ui.window_height - labely - app.ui.font_size, app.input, gg.TextCfg{
@@ -160,6 +192,9 @@ fn on_event(e &gg.Event, mut app App) {
 					app.shift_is_held = true
 				}
 				.enter {
+					app.commands << Command{
+						input: app.input
+					}
 					app.p.stdin_write("\n")
 					app.input = ""
 				}
@@ -209,14 +244,22 @@ fn frame(mut app App) {
 		app.gg.timer.restart()
 		do_update = true
 		app.updates++
+		// could do this in a different thread with blocking and non-blocking reads
+		// but this seems much better
 		if app.p.is_pending(.stdout) {
 			data := app.p.stdout_read()
-			app.text += data
+			app.commands[app.commands.len - 1].stdios << Stdio{
+				std_type: .stdout
+				text: data
+			}
 			app.dirty = true
 		}
 		if app.p.is_pending(.stderr) {
 			data := app.p.stderr_read()
-			app.text += data
+			app.commands[app.commands.len - 1].stdios << Stdio{
+				std_type: .stderr
+				text: data
+			}
 			app.dirty = true
 		}
 		// app.p.wait()
@@ -245,7 +288,6 @@ fn main() {
 	p.set_redirect_stdio()
 	p.use_pgroup = true // i remember this being useful, but forgot why
 	p.run()
-	p.stdin_write("echo hello from v\n")
 
 	mut app := &App{}
 	app.gg = gg.new_context(
@@ -260,6 +302,12 @@ fn main() {
 		user_data:    app
 		font_path:    'JetBrainsMonoNerdFont-Regular.ttf'
 	)
+
+	app.commands << Command{
+		input: "echo hello from v"
+	}
+	p.stdin_write("echo hello from v\n")
+
 	app.p = p
 	app.gg.run()
 }
