@@ -16,6 +16,8 @@ mut:
 	input      string
 	commands     []Command
 	max_rows 	   int
+	screen_rows int
+	cur_row int
 	shift_is_held bool
 	dirty 	   bool
 }
@@ -137,33 +139,32 @@ fn (mut app App) resize() {
 	app.ui.window_height = h
 	app.ui.window_width = w
 
-	app.max_rows = ((app.ui.window_height-2 * (app.ui.y_padding + app.ui.border_size)) / app.ui.font_size)-1
+	app.screen_rows = ((app.ui.window_height-2 * (app.ui.y_padding + app.ui.border_size)) / app.ui.font_size)-1
 }
 
 fn (app &App) draw() {
 	start_x := app.ui.x_padding + app.ui.border_size
 	start_y := app.ui.y_padding + app.ui.border_size
-	mut row := app.max_rows
+	mut row := app.screen_rows
 
 	// draw from the bottom up
+	// TODO i will need total_rows for handling multi line everything. so might as well use that somehow
+	//      but i am getting ahead of myself
 output:
 	for i := app.commands.len-1; i >= 0; i-- {
 		cmd := app.commands[i]
 
 		for stdio in cmd.stdios {
 			lines := stdio.text.split('\n')
-			// TODO ['hello from v', '']. what do i do with last newline
-			//   cant just inc when i see newline anymore. idk. something im missing
-			//   i am printing extra stuff now. would just go to next input. this is honestly better. or i could inc before which isnt right
-			//.   i need to start a newline for the next input. i cant just keep it on the same line
-			for j, line in lines {
+			for j := lines.len - 1; j >= 0; j-- {
+				line := lines[j]
 				// i cant just follow newlines. i have to start a new line for the next input
 				// TODO maybe add notice like zsh with %
 				if line == '' && j == lines.len - 1 {
 					continue
 				}
 
-				app.gg.draw_text(start_x, start_y+row*app.ui.font_size, "$row: "+line, gg.TextCfg{
+				app.gg.draw_text(start_x, start_y+row*app.ui.font_size, line, gg.TextCfg{
 					size: app.ui.font_size
 					color: match stdio.std_type {
 						.stdout { app.theme.text_color }
@@ -177,7 +178,7 @@ output:
 				}
 			}
 
-			app.gg.draw_text(start_x, start_y+row*app.ui.font_size, "$row: "+cmd.input, gg.TextCfg{
+			app.gg.draw_text(start_x, start_y+row*app.ui.font_size, cmd.input, gg.TextCfg{
 				size: app.ui.font_size
 				color: app.theme.padding_color
 			})
@@ -205,10 +206,10 @@ fn on_event(e &gg.Event, mut app App) {
 			match e.key_code {
 				//
 				.escape { app.gg.quit() }
-				.n, .r { 
-					println("double")
-				}
-				.t { app.next_theme() }
+				// .n, .r { 
+				// 	println("double")
+				// }
+				// .t { app.next_theme() }
 				.left_shift, .right_shift {
 					app.shift_is_held = true
 				}
@@ -254,6 +255,9 @@ fn on_event(e &gg.Event, mut app App) {
 		}
 		.mouse_up {
 			println("mouse up at ${e.mouse_x}, ${e.mouse_y}")
+		}
+		.mouse_scroll {
+			println("${e.scroll_x}, ${e.scroll_y}")
 		}
 		else {}
 	}
@@ -330,5 +334,6 @@ fn main() {
 	p.stdin_write("echo hello from v\n")
 
 	app.p = p
+	app.max_rows = 1000
 	app.gg.run()
 }
