@@ -15,7 +15,7 @@ mut:
 	p          &os.Process = unsafe { nil }
 	input      string
 	commands     []Command
-	col 	   int
+	max_rows 	   int
 	shift_is_held bool
 	dirty 	   bool
 }
@@ -43,8 +43,6 @@ mut:
 	dpi_scale     f32
 	tile_size     int
 	border_size   int
-	padding_size  int
-	header_size   int
 	font_size     int
 	window_width  int
 	window_height int
@@ -132,30 +130,31 @@ fn (mut app App) resize() {
 	vh := int(f32(h) / s / ch)
 	println('window resized to ${w}x${h}, view size ${vw}x${vh}, scale=${s}, cw=${cw}, ch=${ch}')
 
-	app.ui.padding_size = 16 // int(m / 38)
-	app.ui.header_size = app.ui.padding_size
-	app.ui.border_size = app.ui.padding_size * 2
+	app.ui.border_size = 16 // int(m / 38)
 	app.ui.font_size = 18 //int(m / 10) // 54
+	app.ui.x_padding = 0
+	app.ui.y_padding = 0
 	app.ui.window_height = h
 	app.ui.window_width = w
+
+	app.max_rows = (app.ui.window_height - 2 * (app.ui.y_padding + app.ui.border_size)) / app.ui.font_size
 }
 
 fn (app &App) draw() {
-	xpad, ypad := app.ui.x_padding, app.ui.y_padding
-	labelx := xpad + app.ui.border_size
-	labely := ypad + app.ui.border_size / 2
-	mut row := 0
+	start_x := app.ui.x_padding + app.ui.border_size
+	start_y := app.ui.y_padding + app.ui.border_size
+	mut row := app.max_rows
 
 	for cmd in app.commands {
 		for stdio in cmd.stdios {
-			app.gg.draw_text(labelx, labely+row*app.ui.font_size, cmd.input, gg.TextCfg{
+			app.gg.draw_text(start_x, start_y+row*app.ui.font_size, cmd.input, gg.TextCfg{
 				size: app.ui.font_size
 				color: app.theme.padding_color
 			})
 
 			for line in stdio.text.split('\n') {
 				row++
-				app.gg.draw_text(labelx, labely+row*app.ui.font_size, line, gg.TextCfg{
+				app.gg.draw_text(start_x, start_y+row*app.ui.font_size, line, gg.TextCfg{
 					size: app.ui.font_size
 					color: match stdio.std_type {
 						.stdout { app.theme.text_color }
@@ -167,7 +166,7 @@ fn (app &App) draw() {
 		}
 	}
 
-	app.gg.draw_text(labelx, app.ui.window_height - labely - app.ui.font_size, app.input, gg.TextCfg{
+	app.gg.draw_text(start_x, app.ui.window_height - start_y - app.ui.font_size, app.input, gg.TextCfg{
 		size: app.ui.font_size
 		color: app.theme.text_color
 	})
