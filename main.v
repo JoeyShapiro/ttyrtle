@@ -137,7 +137,7 @@ fn (mut app App) resize() {
 	app.ui.window_height = h
 	app.ui.window_width = w
 
-	app.max_rows = (app.ui.window_height - 2 * (app.ui.y_padding + app.ui.border_size)) / app.ui.font_size
+	app.max_rows = ((app.ui.window_height-2 * (app.ui.y_padding + app.ui.border_size)) / app.ui.font_size)-1
 }
 
 fn (app &App) draw() {
@@ -145,16 +145,18 @@ fn (app &App) draw() {
 	start_y := app.ui.y_padding + app.ui.border_size
 	mut row := app.max_rows
 
-	for cmd in app.commands {
-		for stdio in cmd.stdios {
-			app.gg.draw_text(start_x, start_y+row*app.ui.font_size, cmd.input, gg.TextCfg{
-				size: app.ui.font_size
-				color: app.theme.padding_color
-			})
+	// draw from the bottom up
+output:
+	for i := app.commands.len-1; i >= 0; i-- {
+		cmd := app.commands[i]
 
-			for line in stdio.text.split('\n') {
-				row++
-				app.gg.draw_text(start_x, start_y+row*app.ui.font_size, line, gg.TextCfg{
+		for stdio in cmd.stdios {
+			lines := stdio.text.split('\n')
+			// TODO ['hello from v', '']. what do i do with last newline
+			//   cant just inc when i see newline anymore. idk. something im missing
+			//   i am printing extra stuff now. would just go to next input. this is honestly better. or i could inc before which isnt right
+			for line in lines[..lines.len-1] {
+				app.gg.draw_text(start_x, start_y+row*app.ui.font_size, "$row: "+line, gg.TextCfg{
 					size: app.ui.font_size
 					color: match stdio.std_type {
 						.stdout { app.theme.text_color }
@@ -162,11 +164,24 @@ fn (app &App) draw() {
 						else { gg.gray }
 					}
 				})
+				row--
+				if row < 0 {
+					break output
+				}
+			}
+
+			app.gg.draw_text(start_x, start_y+row*app.ui.font_size, "$row: "+cmd.input, gg.TextCfg{
+				size: app.ui.font_size
+				color: app.theme.padding_color
+			})
+			row--
+			if row < 0 {
+				break output
 			}
 		}
 	}
 
-	app.gg.draw_text(start_x, app.ui.window_height - start_y - app.ui.font_size, app.input, gg.TextCfg{
+	app.gg.draw_text(start_x, app.ui.window_height - start_y - app.ui.font_size, "$$ "+app.input, gg.TextCfg{
 		size: app.ui.font_size
 		color: app.theme.text_color
 	})
