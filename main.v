@@ -155,7 +155,14 @@ output:
 			// TODO ['hello from v', '']. what do i do with last newline
 			//   cant just inc when i see newline anymore. idk. something im missing
 			//   i am printing extra stuff now. would just go to next input. this is honestly better. or i could inc before which isnt right
-			for line in lines[..lines.len-1] {
+			//.   i need to start a newline for the next input. i cant just keep it on the same line
+			for j, line in lines {
+				// i cant just follow newlines. i have to start a new line for the next input
+				// TODO maybe add notice like zsh with %
+				if line == '' && j == lines.len - 1 {
+					continue
+				}
+
 				app.gg.draw_text(start_x, start_y+row*app.ui.font_size, "$row: "+line, gg.TextCfg{
 					size: app.ui.font_size
 					color: match stdio.std_type {
