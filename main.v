@@ -204,7 +204,6 @@ fn on_event(e &gg.Event, mut app App) {
 	match e.typ {
 		.key_down {
 			match e.key_code {
-				//
 				.escape { app.gg.quit() }
 				// .n, .r { 
 				// 	println("double")
@@ -223,13 +222,38 @@ fn on_event(e &gg.Event, mut app App) {
 				.backspace {
 					if app.input.len > 0 {
 						app.input = app.input[..app.input.len - 1]
-						app.p.stdin_write("\b")
+						app.p.stdin_write("\x7f") // DEL
 					}
 				}
 				else {
 					r := rune(e.key_code)
 					c := if !app.shift_is_held && (r >= `A` && r <= `Z`) {
 						(r + 32).str()
+					} else if app.shift_is_held && (r <= `A` || r >= `Z`) {
+						match r {
+							'~'.runes()[0] { "~" }
+							`1` { "!" }
+							`2` { "@" }
+							`3` { "#" }
+							`4` { "$" }
+							`5` { "%" }
+							`6` { "^" }
+							`7` { "&" }
+							`8` { "*" }
+							`9` { "(" }
+							`0` { ")" }
+							`-` { "_" }
+							`=` { "+" }
+							`[` { "{" }
+							`]` { "}" }
+							`\\` { "|" }
+							`;` { ":" }
+							`'` { "\"" }
+							`,` { "<" }
+							`.` { ">" }
+							`/` { "?" }
+							else { r.str() }
+						}
 					} else {
 						r.str()
 					}
