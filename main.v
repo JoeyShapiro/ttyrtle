@@ -18,6 +18,7 @@ mut:
 	max_rows 	   int
 	screen_rows int
 	cur_row int
+	scroll_offset f32
 	shift_is_held bool
 	dirty 	   bool
 }
@@ -145,7 +146,8 @@ fn (mut app App) resize() {
 fn (app &App) draw() {
 	start_x := app.ui.x_padding + app.ui.border_size
 	start_y := app.ui.y_padding + app.ui.border_size
-	mut row := app.screen_rows
+	mut row_cur := 0
+	row_offset := int(app.scroll_offset / 10)
 
 	// draw from the bottom up
 	// TODO i will need total_rows for handling multi line everything. so might as well use that somehow
@@ -164,6 +166,11 @@ output:
 					continue
 				}
 
+				if row_cur < row_offset {
+					row_cur++
+					continue
+				}
+				row := app.screen_rows - row_cur + row_offset
 				app.gg.draw_text(start_x, start_y+row*app.ui.font_size, line, gg.TextCfg{
 					size: app.ui.font_size
 					color: match stdio.std_type {
@@ -172,24 +179,29 @@ output:
 						else { gg.gray }
 					}
 				})
-				row--
-				if row < 0 {
+				row_cur++
+				if row_cur-row_offset >= app.screen_rows+1 {
 					break output
 				}
 			}
 
+			if row_cur < row_offset {
+				row_cur++
+				continue
+			}
+			row := app.screen_rows - row_cur + row_offset
 			app.gg.draw_text(start_x, start_y+row*app.ui.font_size, cmd.input, gg.TextCfg{
 				size: app.ui.font_size
 				color: app.theme.padding_color
 			})
-			row--
-			if row < 0 {
+			row_cur++
+			if row_cur-row_offset >= app.screen_rows+1 {
 				break output
 			}
 		}
 	}
 
-	app.gg.draw_text(start_x, app.ui.window_height - start_y - app.ui.font_size, "$$ "+app.input, gg.TextCfg{
+	app.gg.draw_text(start_x, app.ui.window_height - start_y - app.ui.font_size, "$ "+app.input, gg.TextCfg{
 		size: app.ui.font_size
 		color: app.theme.text_color
 	})
@@ -281,7 +293,10 @@ fn on_event(e &gg.Event, mut app App) {
 			println("mouse up at ${e.mouse_x}, ${e.mouse_y}")
 		}
 		.mouse_scroll {
-			println("${e.scroll_x}, ${e.scroll_y}")
+			app.scroll_offset += e.scroll_y
+			if app.scroll_offset < 0 {
+				app.scroll_offset = 0
+			}
 		}
 		else {}
 	}
