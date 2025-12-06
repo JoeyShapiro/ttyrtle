@@ -16,6 +16,7 @@ mut:
 	input      string
 	commands     []Command
 	max_rows 	   int
+	total_rows   int
 	screen_rows int
 	cur_row int
 	scroll_offset f32
@@ -201,6 +202,13 @@ output:
 		}
 	}
 
+	// draw thumb scroll bar
+	if app.total_rows > app.screen_rows {
+		thumb_h := f32(app.screen_rows) / f32(app.total_rows) * f32(app.ui.window_height)
+		thumb_pos := f32(row_offset) / f32(app.total_rows - app.screen_rows) * f32(app.ui.window_height - thumb_h)
+		app.gg.draw_rect_filled(app.ui.window_width-10, thumb_pos, 5, thumb_h, app.theme.padding_color)
+	}
+
 	app.gg.draw_text(start_x, app.ui.window_height - start_y - app.ui.font_size, "$ "+app.input, gg.TextCfg{
 		size: app.ui.font_size
 		color: app.theme.text_color
@@ -312,6 +320,7 @@ fn frame(mut app App) {
 		// but this seems much better
 		if app.p.is_pending(.stdout) {
 			data := app.p.stdout_read()
+			app.total_rows += data.count('\n')
 			app.commands[app.commands.len - 1].stdios << Stdio{
 				std_type: .stdout
 				text: data
@@ -320,6 +329,7 @@ fn frame(mut app App) {
 		}
 		if app.p.is_pending(.stderr) {
 			data := app.p.stderr_read()
+			app.total_rows += data.count('\n')
 			app.commands[app.commands.len - 1].stdios << Stdio{
 				std_type: .stderr
 				text: data
