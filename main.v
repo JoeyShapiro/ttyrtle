@@ -52,6 +52,7 @@ mut:
 	window_height int
 	x_padding     int
 	y_padding     int
+	scroll_fluff int
 }
 
 struct Theme {
@@ -140,6 +141,8 @@ fn (mut app App) resize() {
 	app.ui.y_padding = 0
 	app.ui.window_height = h
 	app.ui.window_width = w
+	input_size := app.ui.font_size
+	app.ui.scroll_fluff = app.ui.window_height + app.ui.border_size*2 + app.ui.y_padding*2 + input_size
 
 	app.screen_rows = ((app.ui.window_height-2 * (app.ui.y_padding + app.ui.border_size)) / app.ui.font_size)-1
 }
@@ -301,7 +304,10 @@ fn on_event(e &gg.Event, mut app App) {
 			println("mouse up at ${e.mouse_x}, ${e.mouse_y}")
 		}
 		.mouse_scroll {
-			app.scroll_offset += e.scroll_y
+			if app.scroll_offset+e.scroll_y < app.total_rows*app.ui.font_size-app.ui.scroll_fluff {
+				app.scroll_offset += e.scroll_y
+			}
+
 			if app.scroll_offset < 0 {
 				app.scroll_offset = 0
 			}
