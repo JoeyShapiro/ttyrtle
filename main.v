@@ -207,15 +207,15 @@ output:
 
 	// draw thumb scroll bar
 	if app.total_rows > app.screen_rows {
+		// TODO use scrollable area
 		thumb_h := f32(app.screen_rows) / f32(app.total_rows) * f32(app.ui.window_height)
-		thumb_pos := f32(row_offset) / f32(app.total_rows - app.screen_rows) * f32(app.ui.window_height - thumb_h)
+		inv_thumb_pos := f32(row_offset) / f32(app.total_rows - app.screen_rows) * f32(app.ui.window_height - thumb_h)
+		thumb_pos := f32(app.ui.window_height) - inv_thumb_pos - thumb_h
 		app.gg.draw_rect_filled(app.ui.window_width-10, thumb_pos, 5, thumb_h, app.theme.padding_color)
 		// TODO maybe make this count towards the collision
 		app.gg.draw_circle_filled(f32(app.ui.window_width)-7.5, thumb_pos, 2.5, app.theme.padding_color)
 		app.gg.draw_circle_filled(f32(app.ui.window_width)-7.5, thumb_pos+thumb_h, 2.5, app.theme.padding_color)
 	}
-
-	// TODO scrollbar should be inverted
 
 	app.gg.draw_text(start_x, app.ui.window_height - start_y - app.ui.font_size, "$ "+app.input, gg.TextCfg{
 		size: app.ui.font_size
