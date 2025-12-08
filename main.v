@@ -151,7 +151,6 @@ fn (app &App) draw() {
 	start_x := app.ui.x_padding + app.ui.border_size
 	start_y := app.ui.y_padding + app.ui.border_size
 	mut row_cur := 0
-	// TODO this cant be an arbitrary 10. it has to be the font. so how can i slow down scrolling
 	row_offset := int(app.scroll_offset / app.ui.font_size)
 
 	// draw from the bottom up
@@ -311,7 +310,7 @@ fn on_event(e &gg.Event, mut app App) {
 			println("mouse up at ${e.mouse_x}, ${e.mouse_y}")
 		}
 		.mouse_scroll {
-			app.scroll_offset += e.scroll_y
+			app.scroll_offset += e.scroll_y // * 10 // scroll speed
 
 			if app.scroll_offset < 0 {
 				app.scroll_offset = 0
