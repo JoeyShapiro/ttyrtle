@@ -52,7 +52,7 @@ mut:
 	window_height int
 	x_padding     int
 	y_padding     int
-	scroll_fluff int
+	scrollable_area int
 }
 
 struct Theme {
@@ -142,7 +142,7 @@ fn (mut app App) resize() {
 	app.ui.window_height = h
 	app.ui.window_width = w
 	input_size := app.ui.font_size
-	app.ui.scroll_fluff = app.ui.window_height + app.ui.border_size*2 + app.ui.y_padding*2 + input_size
+	app.ui.scrollable_area = app.ui.window_height - (app.ui.border_size*2 + app.ui.y_padding*2 + input_size)
 
 	app.screen_rows = ((app.ui.window_height-2 * (app.ui.y_padding + app.ui.border_size)) / app.ui.font_size)-1
 }
@@ -151,7 +151,8 @@ fn (app &App) draw() {
 	start_x := app.ui.x_padding + app.ui.border_size
 	start_y := app.ui.y_padding + app.ui.border_size
 	mut row_cur := 0
-	row_offset := int(app.scroll_offset / 10)
+	// TODO this cant be an arbitrary 10. it has to be the font. so how can i slow down scrolling
+	row_offset := int(app.scroll_offset / app.ui.font_size)
 
 	// draw from the bottom up
 	// TODO i will need total_rows for handling multi line everything. so might as well use that somehow
@@ -216,7 +217,6 @@ output:
 	}
 
 	// TODO scrollbar should be inverted
-	// TODO ls -lah breaks the limiter
 
 	app.gg.draw_text(start_x, app.ui.window_height - start_y - app.ui.font_size, "$ "+app.input, gg.TextCfg{
 		size: app.ui.font_size
@@ -242,6 +242,7 @@ fn on_event(e &gg.Event, mut app App) {
 					app.shift_is_held = true
 				}
 				.enter {
+					app.total_rows += app.input.count('\n')+1
 					app.commands << Command{
 						input: app.input
 					}
@@ -316,8 +317,13 @@ fn on_event(e &gg.Event, mut app App) {
 				app.scroll_offset = 0
 			}
 
-			if app.scroll_offset > app.total_rows*app.ui.font_size-app.ui.scroll_fluff {
-				app.scroll_offset = app.total_rows*app.ui.font_size-app.ui.scroll_fluff
+			scroll_range_max := app.total_rows*app.ui.font_size - app.ui.scrollable_area
+			if app.scroll_offset > scroll_range_max {
+				app.scroll_offset = if scroll_range_max < 0 {
+					0
+				} else {
+					scroll_range_max
+				}
 			}
 		}
 		else {}
@@ -391,6 +397,7 @@ fn main() {
 		font_path:    'JetBrainsMonoNerdFont-Regular.ttf'
 	)
 
+	app.total_rows = 1
 	app.commands << Command{
 		input: "echo hello from v"
 	}
