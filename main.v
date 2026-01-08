@@ -419,12 +419,13 @@ fn main() {
 		width:        default_window_width
 		height:       default_window_height
 		sample_count: 2 // higher quality curves
-		window_title: 'Ttyrtle'
+		window_title: 'ttyrtle'
 		frame_fn:     frame
 		event_fn:     on_event
 		init_fn:      init
 		user_data:    app
 		font_path:    'JetBrainsMonoNerdFont-Regular.ttf'
+		// font_path: 'Monocraft.ttf'
 	)
 
 	app.total_rows = 1
