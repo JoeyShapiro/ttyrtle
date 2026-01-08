@@ -12,7 +12,7 @@ mut:
 	theme_idx   int
 	updates     u64
 
-	p          &os.Process = unsafe { nil }
+	p          &PsuedoTerminal = unsafe { nil }
 	input      string
 	commands     []Command
 	max_rows 	   int
@@ -374,13 +374,44 @@ fn init(mut app App) {
 }
 
 fn main() {
+	mut termios := C.termios{}
+	termios.c_iflag = (C.ICRNL | C.IXON | C.IXANY | C.IMAXBEL | C.BRKINT | C.IUTF8)
+	termios.c_oflag = (C.OPOST | C.ONLCR)
+	termios.c_cflag = (C.CREAD | C.CS8 | C.HUPCL)
+	termios.c_lflag = (C.ICANON | C.ISIG | C.IEXTEN | C.ECHO | C.ECHOE | C.ECHOK | C.ECHOKE | C.ECHOCTL)
+
+	mut winsize := C.winsize{
+		ws_row:    24
+		ws_col:    80
+		ws_xpixel: 0
+		ws_ypixel: 0
+	}
+	mut master_fd := 0
+	mut slave_fd := 0
+	mut cname := &char(unsafe { nil })
+	r  := C.openpty(&master_fd, &slave_fd, cname, &termios, &winsize)
+	if r != 0 {
+		eprintln('failed to open pty $r')
+		return
+	}
+
+	name := unsafe { cstring_to_vstring(&cname) }
+	println('parent, master ${master_fd} slave ${slave_fd}, ${name}')
+
+	C.tcgetattr(master_fd, &termios)
+	C.tcsetattr(master_fd, C.TCSAFLUSH, &termios)
+	
+
+	// TODO child has to do this anyway. it seems
 	// TODO wrapper of fork+exec, but maybe use posix_spawn if this isnt good enough
 	mut p := os.new_process("/bin/sh")
+	mut pty := PsuedoTerminal(*p)
+	
 	// args := ['']
 	// p.set_args(args)
-	p.set_redirect_stdio()
-	p.use_pgroup = true // i remember this being useful, but forgot why
-	p.run()
+	pty.set_redirect_stdio()
+	pty.use_pgroup = true // i remember this being useful, but forgot why
+	pty.run_pty(master_fd, slave_fd)
 
 	mut app := &App{}
 	app.gg = gg.new_context(
@@ -400,9 +431,132 @@ fn main() {
 	app.commands << Command{
 		input: "echo hello from v"
 	}
-	p.stdin_write("echo hello from v\n")
+	pty.stdin_write("echo hello from v\n")
 
-	app.p = p
+	app.p = &pty
 	app.max_rows = 1000
 	app.gg.run()
+}
+
+type PsuedoTerminal = os.Process
+
+pub fn (mut pty PsuedoTerminal) run_pty(master_fd int, slave_fd int) {
+	if pty.status != .not_started {
+		return
+	}
+	pty.spawn_pty(master_fd, slave_fd)
+}
+
+fn (mut pty PsuedoTerminal) spawn_pty(master int, slave int) int {
+	if !pty.env_is_custom {
+		pty.env = []string{}
+		current_environment := os.environ()
+		for k, v in current_environment {
+			pty.env << '${k}=${v}'
+		}
+	}
+	mut pid := 0
+	$if windows {
+		pid = pty.win_spawn_process()
+	} $else {
+		pid = pty.unix_spawn_pty(master, slave)
+	}
+	pty.pid = pid
+	pty.status = .running
+
+	return 0
+}
+
+fn (mut pty PsuedoTerminal) posix_spawn_pty(master int, slave int) int {
+	mut actions := unsafe { &C.posix_spawn_file_actions_t(malloc(256)) }
+	defer { unsafe { free(actions) } }
+
+	C.posix_spawn_file_actions_init(actions)
+	
+	C.posix_spawn_file_actions_adddup2(actions, slave, C.STDIN_FILENO)
+	C.posix_spawn_file_actions_adddup2(actions, slave, C.STDOUT_FILENO)
+	C.posix_spawn_file_actions_adddup2(actions, slave, C.STDERR_FILENO)
+	C.posix_spawn_file_actions_addclose(actions, master)
+
+	mut spawn_attr := unsafe { &C.posix_spawnattr_t(malloc(256)) }
+	defer { unsafe { free(spawn_attr) } }
+	C.posix_spawnattr_init(spawn_attr)
+
+	flags := C.POSIX_SPAWN_SETSID
+	mut rc := C.posix_spawnattr_setflags(spawn_attr, flags)
+	if rc != 0 {
+		println("attr failed")
+	}
+
+	mut env_ptrs := []&char{cap: pty.env.len + 1}
+    for env_var in pty.env {
+        env_ptrs << env_var.str
+    }
+    env_ptrs << '\0'.str  // NULL terminator
+
+	mut pid := 0
+	rc = C.posix_spawn(&pid, pty.filename.str,actions, spawn_attr, 0, &char(env_ptrs.data))
+	// pid := os.fork()
+	if rc != 0 {
+		println(cstring_to_vstring(C.strerror(rc)))
+		return 0
+	}
+
+	pty.stdio_fd[0] = master // store the write end of child's in
+	pty.stdio_fd[1] = master // store the read end of child's out
+	pty.stdio_fd[2] = master // store the read end of child's err
+
+	return pid
+}
+
+
+fn (mut pty PsuedoTerminal) unix_spawn_pty(master int, slave int) int {
+	pid := os.fork()
+	if pid != 0 {
+		// This is the parent process after the fork.
+		// Note: pid contains the process ID of the child process
+		if pty.use_stdio_ctl {
+			pty.stdio_fd[0] = master // store the write end of child's in
+			pty.stdio_fd[1] = master // store the read end of child's out
+			pty.stdio_fd[2] = master // store the read end of child's err
+			// close the rest of the pipe fds, the parent does not need them
+			os.fd_close(slave)
+		}
+		return pid
+	}
+	//
+	// Here, we are in the child process.
+	// It still shares file descriptors with the parent process,
+	// but it is otherwise independent and can do stuff *without*
+	// affecting the parent process.
+	//
+	if pty.use_pgroup {
+		C.setpgid(0, 0)
+	}
+	if pty.use_stdio_ctl {
+		// Redirect the child standard in/out/err to the pipes that
+		// were created in the parent.
+		// Close the parent's pipe fds, the child do not need them:
+		os.fd_close(master)
+		// redirect the pipe fds to the child's in/out/err fds:
+		C.dup2(slave, 0)
+		C.dup2(slave, 1)
+		C.dup2(slave, 2)
+		// close the pipe fdsx after the redirection
+		os.fd_close(slave)
+	}
+	if pty.work_folder != '' {
+		if !os.is_abs_path(pty.filename) {
+			// Ensure p.filename contains an absolute path, so it
+			// can be located reliably, even after changing the
+			// current folder in the child process:
+			pty.filename = os.abs_path(pty.filename)
+		}
+		os.chdir(pty.work_folder) or {}
+	}
+	os.execve(pty.filename, pty.args, pty.env) or {
+		eprintln(err)
+		exit(1)
+	}
+	return 0
 }
