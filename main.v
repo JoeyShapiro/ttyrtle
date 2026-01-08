@@ -388,14 +388,14 @@ fn main() {
 	}
 	mut master_fd := 0
 	mut slave_fd := 0
-	mut cname := &char(unsafe { nil })
-	r  := C.openpty(&master_fd, &slave_fd, cname, &termios, &winsize)
+	mut cname := []char{len: 1024}
+	r  := C.openpty(&master_fd, &slave_fd, cname.data, &termios, &winsize)
 	if r != 0 {
 		eprintln('failed to open pty $r')
 		return
 	}
 
-	name := unsafe { cstring_to_vstring(&cname) }
+	name := unsafe { cstring_to_vstring(cname.data) }
 	println('parent, master ${master_fd} slave ${slave_fd}, ${name}')
 
 	C.tcgetattr(master_fd, &termios)
@@ -458,8 +458,10 @@ fn (mut pty PsuedoTerminal) spawn_pty(master int, slave int) int {
 	}
 	mut pid := 0
 	$if windows {
+		// TODO add windows
 		pid = pty.win_spawn_process()
 	} $else {
+		// TODO switch to posix_spawn
 		pid = pty.unix_spawn_pty(master, slave)
 	}
 	pty.pid = pid
@@ -469,6 +471,7 @@ fn (mut pty PsuedoTerminal) spawn_pty(master int, slave int) int {
 }
 
 fn (mut pty PsuedoTerminal) posix_spawn_pty(master int, slave int) int {
+	// TODO add pipes
 	mut actions := unsafe { &C.posix_spawn_file_actions_t(malloc(256)) }
 	defer { unsafe { free(actions) } }
 
@@ -497,9 +500,8 @@ fn (mut pty PsuedoTerminal) posix_spawn_pty(master int, slave int) int {
 
 	mut pid := 0
 	rc = C.posix_spawn(&pid, pty.filename.str,actions, spawn_attr, 0, &char(env_ptrs.data))
-	// pid := os.fork()
 	if rc != 0 {
-		println(cstring_to_vstring(C.strerror(rc)))
+		println(unsafe { cstring_to_vstring(C.strerror(rc)) })
 		return 0
 	}
 
